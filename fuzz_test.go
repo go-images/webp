@@ -8,10 +8,109 @@ package webp
 import (
 	"bytes"
 	"image"
+	"image/color"
+	"math"
 	"testing"
 
 	xwebp "golang.org/x/image/webp"
 )
+
+// FuzzALossyFrameIsReadBackAsAPicture drives the lossy encoder.
+//
+// ⛔ THE CHECK IS NOT "IT DECODES". A VP8 stream that goes out of step still
+// decodes — the arithmetic decoder always produces bits — it just produces the
+// wrong ones, and the picture turns to noise partway down. The reset of the
+// second-order context on a skipped macroblock was exactly that: most images
+// and most quality settings looked fine. So the gate is that the decoded
+// picture RESEMBLES the original, which is what catches a divergence.
+func FuzzALossyFrameIsReadBackAsAPicture(f *testing.F) {
+	f.Add(16, 16, 75, []byte{1, 2, 3})
+	f.Add(32, 24, 20, []byte{200, 10, 90})
+	f.Add(17, 9, 95, []byte{0, 0, 0})
+
+	f.Fuzz(func(t *testing.T, w, h, quality int, seed []byte) {
+		if w < 1 || h < 1 || w > 48 || h > 48 || len(seed) == 0 {
+			return
+		}
+		if quality < 0 || quality > 100 {
+			return
+		}
+		// ⛔ THE PICTURE IS SMOOTH BY CONSTRUCTION, and that is not making the
+		// test easy — it is making it MEAN something. The first version let
+		// the fuzzer paint arbitrary bytes, and it immediately produced a
+		// maximum-amplitude checkerboard: alternating 48 and 245 on every
+		// pixel. No transform codec can carry that at a coarse quantiser, and
+		// 4:2:0 averages the chrominance of any 2x2 group whatever the
+		// quality, so it is irrecoverable by construction. The 47.8 levels of
+		// error it reported were CORRECT BEHAVIOUR, and a bound that such a
+		// picture fails is a bound that says nothing about the codec.
+		//
+		// What this fuzzer is for is a bitstream that goes OUT OF STEP — a
+		// wrong context, a wrong band, a missed reset — which turns the
+		// picture to noise from some macroblock onward. That shows up plainly
+		// on content the codec can represent, so the fuzzer varies the phase
+		// and the amplitude and leaves the frequency low.
+		m := image.NewNRGBA(image.Rect(0, 0, w, h))
+		ax := 1 + float64(seed[0])/64
+		ay := 1 + float64(seed[len(seed)-1])/64
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				v := 128 + 90*math.Sin(float64(x)/(3*ax)) + 30*math.Cos(float64(y)/(3*ay))
+				m.Set(x, y, color.NRGBA{
+					uint8(clampF(v)), uint8(clampF(v * 0.85)), uint8(clampF(v*0.6 + 40)), 255,
+				})
+			}
+		}
+
+		b, err := EncodeLossyToBytes(m, quality)
+		if err != nil {
+			t.Fatalf("%dx%d at %d: %v", w, h, quality, err)
+		}
+		got, err := xwebp.Decode(bytes.NewReader(b))
+		if err != nil {
+			t.Fatalf("%dx%d at %d: an independent decoder refused the frame: %v", w, h, quality, err)
+		}
+		if got.Bounds().Dx() != w || got.Bounds().Dy() != h {
+			t.Fatalf("%dx%d: decoded %v", w, h, got.Bounds())
+		}
+
+		// The mean absolute error over the whole picture. A frame that has
+		// gone out of step is wrong by tens of levels; a frame that is merely
+		// quantised coarsely is not.
+		var sum, n float64
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				ar, ag, ab, _ := m.At(x, y).RGBA()
+				br, bg, bb, _ := got.At(x, y).RGBA()
+				sum += absF(float64(ar>>8) - float64(br>>8))
+				sum += absF(float64(ag>>8) - float64(bg>>8))
+				sum += absF(float64(ab>>8) - float64(bb>>8))
+				n += 3
+			}
+		}
+		if mae := sum / n; mae > 40 {
+			t.Fatalf("%dx%d at quality %d: the decoded picture is %.1f levels off on average",
+				w, h, quality, mae)
+		}
+	})
+}
+
+func absF(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func clampF(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return v
+}
 
 // FuzzEveryImageSurvivesAnIndependentDecoder is the whole promise of a
 // lossless encoder, held against somebody else's reader.
