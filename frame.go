@@ -71,13 +71,34 @@ func toYCbCr(src *image.NRGBA, width, height, mbw, mbh int) *planes {
 	return out
 }
 
-// rgbToYCbCr is the BT.601 conversion in the fixed-point form the decoder's
-// image.YCbCr inverse expects.
+// rgbToYCbCr is BT.601 in the STUDIO range: luma runs 16 to 235 rather than 0
+// to 255.
+//
+// ⛔ THIS IS THE CONVENTION libwebp DECODES WITH, AND IT IS NOT GO'S. Go's
+// image/color treats luma as full range — R = Y + 1.402*(Cr-128) — while
+// libwebp, and therefore every browser, uses R = 1.164*(Y-16) + …. The two
+// differ by a CONTRAST STRETCH, not a rounding.
+//
+// This encoder wrote Go's convention until it was measured against libwebp's
+// own decoder, which rendered a source grey of 20 as 5, 64 as 56, 200 as 214 —
+// matching the studio-range prediction on every sample. Our files opened in a
+// browser with their blacks crushed.
+//
+// ⛔ AND THE WHOLE TEST SUITE MISSED IT, because the oracle was
+// golang.org/x/image/vp8: an independent implementation in CODE that shares
+// Go's convention for COLOUR. Two halves can be written by different people
+// from the same specification and still agree about the same wrong thing. It
+// showed as a PSNR that stopped improving at about 31 dB however fine the
+// quantiser got — an error floor, which is what a convention mismatch looks
+// like from the outside.
+//
+// The coefficients are BT.601's, scaled so that each row sums to the range it
+// spans: 219 for luma, 224 for the two chrominance channels.
 func rgbToYCbCr(r, g, b uint8) (uint8, uint8, uint8) {
 	r1, g1, b1 := int32(r), int32(g), int32(b)
-	yy := (19595*r1 + 38470*g1 + 7471*b1 + 1<<15) >> 16
-	cb := (-11056*r1 - 21712*g1 + 32768*b1 + 257<<15) >> 16
-	cr := (32768*r1 - 27440*g1 - 5328*b1 + 257<<15) >> 16
+	yy := (16827*r1 + 33039*g1 + 6416*b1 + 16<<16 + 1<<15) >> 16
+	cb := (-9714*r1 - 19071*g1 + 28784*b1 + 128<<16 + 1<<15) >> 16
+	cr := (28784*r1 - 24103*g1 - 4681*b1 + 128<<16 + 1<<15) >> 16
 	return clip8(yy), clip8(cb), clip8(cr)
 }
 

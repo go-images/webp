@@ -132,6 +132,72 @@ at coarse settings. Writing a level this encoder does not itself apply would
 be worse: the decoder would filter a picture the encoder never saw filtered,
 so the two would disagree about what the frame looks like.
 
+### Measured against libwebp itself
+
+`cwebp` and `dwebp` are the reference implementation — what every browser
+ships. On a 400×520 page of text and a 256×256 photograph:
+
+| | ours | | libwebp | |
+|---:|---:|---:|---:|---:|
+| **quality** | **bytes** | **dB** | **bytes** | **dB** |
+| text 70 | 140 802 | 35.7 | 62 446 | 37.5 |
+| text 90 | 208 350 | 44.0 | 78 650 | 45.3 |
+| text 99 | 262 154 | 53.9 | 97 478 | 55.0 |
+| photo 70 | 2 076 | 35.2 | 2 146 | 36.5 |
+| photo 90 | 15 488 | 38.3 | 11 936 | 40.3 |
+| photo 99 | 41 248 | 44.9 | 25 188 | 45.4 |
+
+The **quality numbers mean nearly the same thing** in both encoders — within
+about a decibel. The **size** does not: at matched quality this is roughly 1.6
+to 2.7 times larger, which is what the missing 4×4 intra modes, loop filter
+and rate–distortion search cost. Stated because it was measured, not guessed.
+
+Lossless is **bit-exact through libwebp's own decoder** — worst pixel 0 on all
+four pictures — at 1.2 to 1.8 times libwebp's size.
+
+⛔ **On a page of text, our lossless output is ten times smaller than our own
+lossy output** (17 266 bytes against 165 376 at quality 75). That is why
+`go-pdfkit/convert` maps quality 100 onto the lossless codec, and why a
+document page should use it.
+
+### ⛔ A whole release wrote the wrong colour range
+
+The luma range. Go's `image/color` treats it as **full scale**, 0..255:
+`R = Y + 1.402*(Cr-128)`. libwebp — and therefore every browser — reads it as
+**studio range**, 16..235: `R = 1.164*(Y-16) + …`. The two differ by a contrast
+stretch, not a rounding.
+
+`v0.2.0` wrote Go's convention. Measured against `dwebp`, a source grey of 20
+came back as **5**, 64 as 56, 200 as 214 — matching the studio-range
+prediction on every sample. Files opened in a browser with their blacks
+crushed.
+
+**The whole test suite agreed with it.** The oracle was
+`golang.org/x/image/webp`: an independent implementation in *code*, written by
+other people from the same specification — and sharing Go's convention for
+*colour*. Two halves can be written independently and still agree about the
+same wrong thing.
+
+The only symptom was a figure that **stopped improving** as the quantiser got
+finer: about 31 dB on text whatever the quality, while the file grew past a
+quarter of a megabyte. An error floor is what a convention mismatch looks like
+from outside. Isolating it took one measurement — comparing the encoder's own
+reconstruction against the decoder's, in **planes** rather than in RGB, which
+came back at `+Inf dB`: bit-exact. The codec was right; the colour was not.
+
+Three things changed as a result:
+
+- the conversion is studio range, pinned by a test that needs no decoder
+  (black is 16, white is 235);
+- the lossy measurements compare **planes**, so no colour convention can enter
+  them;
+- CI installs libwebp and `dwebp` judges the greys, because it is the one
+  oracle that could see this.
+
+Fixing it made the files **smaller and better at once** — the photograph went
+from 974 bytes at 35.3 dB to 716 bytes at 41.5 dB — because studio range is a
+narrower span and the residuals shrink with it.
+
 ### What the lossy path cost to get right
 
 **A skipped macroblock resets every context, the second-order one included.**

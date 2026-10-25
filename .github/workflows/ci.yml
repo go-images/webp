@@ -20,6 +20,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.2'
+      # ⛔ libwebp's OWN TOOLS, because an independent implementation is not
+      # the reference one. The whole suite judged with golang.org/x/image/webp
+      # — a separate reading of the specification, and a real oracle — and it
+      # agreed with a colour-range mistake it shared, because both are Go and
+      # Go's convention for luma is full scale while libwebp's is studio.
+      # A release went out writing frames that browsers rendered with crushed
+      # blacks. dwebp is the one judge that could see it.
+      - name: Install libwebp, which is the reference implementation
+        run: sudo apt-get update && sudo apt-get install -y webp
       - name: Gofmt
         run: |
           out=$(gofmt -l .)
