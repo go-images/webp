@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       # ⛔ libwebp's OWN TOOLS, because an independent implementation is not
       # the reference one. The whole suite judged with golang.org/x/image/webp
       # — a separate reading of the specification, and a real oracle — and it
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       - name: Fuzz the round trip
         run: go test -run Fuzz -fuzz FuzzEveryImageSurvivesAnIndependentDecoder -fuzztime 90s .
 
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   cross-build:
@@ -106,7 +106,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       - name: Build ${{ matrix.target }}
         run: |
           export GOOS=$(echo "${{ matrix.target }}" | cut -d/ -f1)
